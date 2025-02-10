@@ -1,0 +1,244 @@
+package com.example.imagex;
+
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.graphics.PointF;
+import android.graphics.RectF;
+import android.util.AttributeSet;
+import android.view.GestureDetector;
+import android.view.MotionEvent;
+import android.view.ViewTreeObserver;
+import androidx.appcompat.widget.AppCompatImageView;
+
+public class ZoomableImageView extends AppCompatImageView {
+
+    private Matrix matrix = new Matrix();
+    private Matrix savedMatrix = new Matrix();
+
+    private static final int NONE = 0;
+    private static final int ZOOM = 1;
+    private static final int DRAG = 2;
+    private int mode = NONE;
+
+    private PointF start = new PointF();
+    private PointF mid = new PointF();
+    private float oldDist = 1f;
+    private float[] matrixValues = new float[9];
+
+    private float minScale = 1f;
+    private float maxScale = 5f;
+    private float initialZoomScale = 2.0f;
+
+    private Bitmap bitmap;
+
+    private static final float ZOOM_THRESHOLD = 1.1f;
+
+    private GestureDetector gestureDetector;
+    private boolean isZoomedIn = false;
+
+    private RectF imageBounds = new RectF();
+    private RectF viewBounds = new RectF();
+
+    public ZoomableImageView(Context context) {
+        super(context);
+        init(context);
+    }
+
+    public ZoomableImageView(Context context, AttributeSet attrs) {
+        super(context, attrs);
+        init(context);
+    }
+
+    private void init(Context context) {
+        setScaleType(ScaleType.MATRIX);
+        gestureDetector = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDoubleTap(MotionEvent e) {
+                float scale = getScale();
+                if (scale <= minScale) {
+                    zoomTo(initialZoomScale, e.getX(), e.getY());
+                    isZoomedIn = true;
+                } else {
+                    resetZoom();
+                    isZoomedIn = false;
+                }
+                return true;
+            }
+        });
+    }
+
+    public void setImage(String imagePath) {
+        bitmap = BitmapFactory.decodeFile(imagePath);
+        if (bitmap != null) {
+            setImageBitmap(bitmap);
+            getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+                @Override
+                public void onGlobalLayout() {
+                    getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                    fitImageToView();
+                }
+            });
+        }
+    }
+
+    private void fitImageToView() {
+        if (bitmap == null || getWidth() == 0 || getHeight() == 0) {
+            return;
+        }
+
+        float scale;
+        float viewWidth = getWidth();
+        float viewHeight = getHeight();
+        float bitmapWidth = bitmap.getWidth();
+        float bitmapHeight = bitmap.getHeight();
+
+        if (bitmapWidth / viewWidth > bitmapHeight / viewHeight) {
+            scale = viewWidth / bitmapWidth;
+        } else {
+            scale = viewHeight / bitmapHeight;
+        }
+
+        matrix.setScale(scale, scale);
+
+        // Center the image
+        float redundantYSpace = viewHeight - (scale * bitmapHeight);
+        float redundantXSpace = viewWidth - (scale * bitmapWidth);
+        matrix.postTranslate(redundantXSpace / 2, redundantYSpace / 2);
+
+        setImageMatrix(matrix);
+        updateBounds();
+    }
+
+    private void resetZoom() {
+        fitImageToView();
+    }
+
+    private void zoomTo(float scale, float centerX, float centerY) {
+        matrix.set(savedMatrix);
+        matrix.postScale(scale, scale, centerX, centerY);
+        setImageMatrix(matrix);
+        updateBounds();
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        viewBounds.set(0, 0, w, h);
+        updateBounds();
+    }
+
+    private void updateBounds() {
+        if (bitmap != null) {
+            imageBounds.set(0, 0, bitmap.getWidth(), bitmap.getHeight());
+            matrix.mapRect(imageBounds);
+        }
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        gestureDetector.onTouchEvent(event);
+
+        switch (event.getAction() & MotionEvent.ACTION_MASK) {
+            case MotionEvent.ACTION_DOWN:
+                savedMatrix.set(matrix);
+                start.set(event.getX(), event.getY());
+                mode = DRAG;
+                break;
+            case MotionEvent.ACTION_POINTER_DOWN:
+                oldDist = spacing(event);
+                if (oldDist > 10f) {
+                    savedMatrix.set(matrix);
+                    midPoint(mid, event);
+                    mode = ZOOM;
+                }
+                break;
+            case MotionEvent.ACTION_MOVE:
+                if (mode == ZOOM) {
+                    float newDist = spacing(event);
+                    if (newDist > 10f) {
+                        matrix.set(savedMatrix);
+                        float scale = newDist / oldDist;
+                        matrix.postScale(scale, scale, mid.x, mid.y);
+                        limitZoom();
+                    }
+                } else if (mode == DRAG) {
+                    matrix.set(savedMatrix);
+                    matrix.postTranslate(event.getX() - start.x, event.getY() - start.y);
+                    limitDrag();
+                }
+                break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP:
+                mode = NONE;
+                break;
+        }
+
+        setImageMatrix(matrix);
+        updateBounds();
+        return true;
+    }
+
+    private void limitZoom() {
+        float[] values = new float[9];
+        matrix.getValues(values);
+        float scale = values[Matrix.MSCALE_X];
+
+        if (scale < minScale) {
+            matrix.setScale(minScale, minScale);
+            matrix.postTranslate((viewBounds.width() - bitmap.getWidth() * minScale) / 2f,
+                    (viewBounds.height() - bitmap.getHeight() * minScale) / 2f);
+        } else if (scale > maxScale) {
+            matrix.setScale(maxScale, maxScale);
+        }
+    }
+
+    private void limitDrag() {
+        matrix.getValues(matrixValues);
+        float translateX = matrixValues[Matrix.MTRANS_X];
+        float translateY = matrixValues[Matrix.MTRANS_Y];
+
+        float currentScale = matrixValues[Matrix.MSCALE_X];
+        float scaledWidth = bitmap.getWidth() * currentScale;
+        float scaledHeight = bitmap.getHeight() * currentScale;
+
+        if (translateX > 0) {
+            translateX = 0;
+        }
+        if (scaledWidth + translateX < viewBounds.width()) {
+            translateX = viewBounds.width() - scaledWidth;
+        }
+
+        if (translateY > 0) {
+            translateY = 0;
+        }
+        if (scaledHeight + translateY < viewBounds.height()) {
+            translateY = viewBounds.height() - scaledHeight;
+        }
+
+        matrix.setTranslate(translateX, translateY);
+        matrix.preScale(currentScale, currentScale);
+    }
+
+    private float spacing(MotionEvent event) {
+        float x = event.getX(0) - event.getX(1);
+        float y = event.getY(0) - event.getY(1);
+        return (float) Math.sqrt(x * x + y * y);
+    }
+
+    private void midPoint(PointF point, MotionEvent event) {
+        float x = event.getX(0) + event.getX(1);
+        float y = event.getY(0) + event.getY(1);
+        point.set(x / 2, y / 2);
+    }
+
+    private float getScale() {
+        matrix.getValues(matrixValues);
+        return matrixValues[Matrix.MSCALE_X];
+    }
+
+    public boolean isZoomedIn() {
+        return getScale() > ZOOM_THRESHOLD;
+    }
+}
