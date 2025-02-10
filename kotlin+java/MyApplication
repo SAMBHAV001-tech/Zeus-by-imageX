@@ -1,0 +1,49 @@
+package com.example.imagex;
+
+import android.app.Application;
+import android.content.Context;
+
+import androidx.multidex.MultiDex; // Correct import for MultiDex
+
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.GlideBuilder;
+import com.bumptech.glide.load.engine.cache.LruResourceCache;
+import com.bumptech.glide.load.engine.cache.MemorySizeCalculator;
+
+public class MyApplication extends Application {
+
+    @Override
+    protected void attachBaseContext(Context base) {
+        super.attachBaseContext(base);
+        // Initialize MultiDex
+        MultiDex.install(this);
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+
+        // Configure Glide with custom memory settings
+        MemorySizeCalculator calculator = new MemorySizeCalculator.Builder(this)
+                .setMemoryCacheScreens(2f)
+                .build();
+
+        Glide.init(this, new GlideBuilder()
+                .setMemoryCache(new LruResourceCache(calculator.getMemoryCacheSize())));
+    }
+
+    @Override
+    public void onLowMemory() {
+        super.onLowMemory();
+        // Clear image caches when system is low on memory
+        Glide.get(this).clearMemory();
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        // Trim memory based on system memory pressure
+        Glide.get(this).trimMemory(level);
+    }
+}
+
