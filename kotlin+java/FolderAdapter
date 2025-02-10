@@ -1,0 +1,178 @@
+package com.example.imagex;
+
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.drawable.BitmapDrawable;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ImageView;
+import android.widget.TextView;
+
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.DiffUtil;
+import androidx.recyclerview.widget.RecyclerView;
+
+import com.bumptech.glide.Glide;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class FolderAdapter extends RecyclerView.Adapter<FolderAdapter.FolderViewHolder> {
+    private List<String> folderNames;
+    private Context context;
+    private FolderClickListener folderClickListener; // Added listener for folder click
+    private ExecutorService executorService; // For background tasks
+    private Handler mainHandler = new Handler(Looper.getMainLooper()); // Handler for UI updates
+
+    // Constructor to pass folder names, context, and the folder click listener
+    public FolderAdapter(List<String> folderNames, Context context, FolderClickListener folderClickListener) {
+        this.folderNames = folderNames;
+        this.context = context;
+        this.folderClickListener = folderClickListener; // Initialize the listener
+        this.executorService = Executors.newSingleThreadExecutor(); // Initialize ExecutorService
+    }
+
+    @NonNull
+    @Override
+    public FolderViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        // Inflate the folder_view layout
+        View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.folder_view, parent, false);
+        return new FolderViewHolder(view);
+    }
+
+    @Override
+    public void onBindViewHolder(@NonNull FolderViewHolder holder, int position) {
+        // Set the folder name to the TextView
+        String folderName = folderNames.get(position);
+        holder.tvFolderName.setText(folderName);
+
+        // Load folder icon efficiently with Glide
+        Glide.with(context)
+                .load(R.drawable.ic_folder) // Replace with actual folder icon if needed
+                .placeholder(R.drawable.placeholder) // Placeholder icon while loading
+                .error(R.drawable.error_image) // Error image if loading fails
+                .into(holder.folderIcon);
+
+        // Handle folder click to invoke the listener's onFolderClick method
+        holder.itemView.setOnClickListener(v -> folderClickListener.onFolderClick(folderName));
+    }
+
+    @Override
+    public int getItemCount() {
+        return folderNames.size();
+    }
+
+    // Method to update the folder names list using DiffUtil
+    public void updateFolderList(List<String> newFolderNames) {
+        executorService.execute(() -> {
+            // Create a DiffUtil callback
+            DiffUtil.DiffResult diffResult = DiffUtil.calculateDiff(new FolderDiffCallback(this.folderNames, newFolderNames));
+
+            // Update the old folder names with the new data
+            folderNames.clear();
+            folderNames.addAll(newFolderNames);
+
+            // Notify the RecyclerView of changes on the main thread
+            mainHandler.post(() -> diffResult.dispatchUpdatesTo(FolderAdapter.this));
+        });
+    }
+
+    // Method to add more folders (for pagination)
+    public void addFolders(List<String> newFolders) {
+        List<String> updatedFolderList = new ArrayList<>(folderNames); // Create a copy of the current list
+        updatedFolderList.addAll(newFolders); // Add new folders to the list
+
+        // Use DiffUtil to calculate the differences and update the RecyclerView efficiently
+        updateFolderList(updatedFolderList);
+    }
+
+    // Method to add a single folder
+    public void addFolder(String newFolder) {
+        folderNames.add(newFolder);
+        mainHandler.post(() -> notifyItemInserted(folderNames.size() - 1));
+    }
+
+    // Method to remove a folder at a specific position
+    public void removeFolder(int position) {
+        if (position >= 0 && position < folderNames.size()) {
+            folderNames.remove(position);
+            mainHandler.post(() -> notifyItemRemoved(position));
+        }
+    }
+
+    // ViewHolder class to hold the folder item layout
+    public static class FolderViewHolder extends RecyclerView.ViewHolder {
+        public TextView tvFolderName;
+        public ImageView folderIcon; // ImageView for the folder icon
+
+        public FolderViewHolder(@NonNull View itemView) {
+            super(itemView);
+            // Initialize the TextView and ImageView from folder_view layout
+            tvFolderName = itemView.findViewById(R.id.folderNameTextView);
+            folderIcon = itemView.findViewById(R.id.folderImageView); // Ensure this ID matches with folder_view.xml
+        }
+    }
+
+    // Custom DiffUtil.Callback class for comparing folder names
+    public static class FolderDiffCallback extends DiffUtil.Callback {
+
+        private final List<String> oldFolderList;
+        private final List<String> newFolderList;
+
+        public FolderDiffCallback(List<String> oldFolderList, List<String> newFolderList) {
+            this.oldFolderList = oldFolderList;
+            this.newFolderList = newFolderList;
+        }
+
+        @Override
+        public int getOldListSize() {
+            return oldFolderList.size();
+        }
+
+        @Override
+        public int getNewListSize() {
+            return newFolderList.size();
+        }
+
+        @Override
+        public boolean areItemsTheSame(int oldItemPosition, int newItemPosition) {
+            // Assuming folder names are unique, you can compare names directly
+            return oldFolderList.get(oldItemPosition).equals(newFolderList.get(newItemPosition));
+        }
+
+        @Override
+        public boolean areContentsTheSame(int oldItemPosition, int newItemPosition) {
+            // Compare the folder names to check if the contents are the same
+            return oldFolderList.get(oldItemPosition).equals(newFolderList.get(newItemPosition));
+        }
+    }
+
+    // Override onViewRecycled to recycle bitmaps
+    @Override
+    public void onViewRecycled(@NonNull FolderViewHolder holder) {
+        super.onViewRecycled(holder);
+
+        // If the image is a bitmap, recycle it
+        if (holder.folderIcon.getDrawable() instanceof BitmapDrawable) {
+            BitmapDrawable bitmapDrawable = (BitmapDrawable) holder.folderIcon.getDrawable();
+            Bitmap bitmap = bitmapDrawable.getBitmap();
+            if (bitmap != null && !bitmap.isRecycled()) {
+                bitmap.recycle();
+            }
+        }
+    }
+
+    // Shutdown ExecutorService when no longer needed
+    public void shutdown() {
+        if (!executorService.isShutdown()) {
+            executorService.shutdown();
+        }
+    }
+}
