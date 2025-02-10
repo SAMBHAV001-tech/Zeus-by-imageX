@@ -1,0 +1,6 @@
+package com.example.imagex; // Add your package statement here
+
+// Public interface for folder click listener
+public interface FolderClickListener {
+    void onFolderClick(String folderName); // Method to be implemented by the listener
+}
